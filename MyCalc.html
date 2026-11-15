@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MyCalc</title>
+<style>
+:root{--bg:#f3f3f3;--panel:#fff;--text:#1a1a1a;--num:#fff;--fn:#eceef3;--accent:#2b5fd9;--accent-text:#fff;--muted:#666;--border:#d6d6d6;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1c1e;--panel:#262628;--text:#f2f2f2;--num:#3b3b3e;--fn:#2e2e31;--accent:#6c9bff;--accent-text:#0b1020;--muted:#a0a0a5;--border:#3a3a3d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1c1c1e;--panel:#262628;--text:#f2f2f2;--num:#3b3b3e;--fn:#2e2e31;--accent:#6c9bff;--accent-text:#0b1020;--muted:#a0a0a5;--border:#3a3a3d;color-scheme:dark}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center}
+.calc{width:min(360px,100%);padding:16px;box-sizing:border-box}
+.screen{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:12px;text-align:right;overflow:hidden}
+#expr{min-height:20px;color:var(--muted);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#disp{font-size:44px;font-weight:600;line-height:1.2;white-space:nowrap}
+.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+button{font:inherit;font-size:20px;padding:16px 0;border:1px solid var(--border);border-radius:8px;background:var(--fn);color:var(--text);cursor:pointer}
+button.n{background:var(--num);font-weight:600}
+button.eq{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+button:active{filter:brightness(.9)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+.modes{display:flex;gap:6px;margin-bottom:10px}
+.modes button{flex:1;font-size:14px;padding:8px 0}
+.modes button[aria-pressed="true"]{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.sci{margin-bottom:6px}
+.sci button{font-size:16px;padding:12px 0}
+.hist{margin-top:12px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:8px 12px}
+.hist summary{cursor:pointer;font-size:14px;color:var(--muted)}
+#hlist{list-style:none;margin:8px 0;padding:0;max-height:150px;overflow-y:auto}
+#hlist li{padding:6px 0;border-bottom:1px solid var(--border);font-size:14px;text-align:right}
+.hist button{font-size:13px;padding:6px 10px}
+</style>
+</head>
+<body>
+<main class="calc">
+  <div class="modes"><button data-mode="std" aria-pressed="true">Standard</button><button data-mode="sci" aria-pressed="false">Scientific</button></div>
+  <div class="screen"><div id="expr"></div><div id="disp">0</div></div>
+  <div class="keys sci" id="sci" hidden>
+    <button data-k="sin">sin</button><button data-k="cos">cos</button><button data-k="tan">tan</button><button data-k="deg" id="degbtn">Deg</button>
+    <button data-k="ln">ln</button><button data-k="log">log</button><button data-k="fact">n!</button><button data-k="tenx">10ˣ</button>
+    <button data-k="pi">π</button><button data-k="e">e</button><button data-k="^">xʸ</button><button data-k="abs">|x|</button>
+  </div>
+  <div class="keys" id="keys">
+    <button data-k="pct">%</button><button data-k="CE">CE</button><button data-k="C">C</button><button data-k="BS">⌫</button>
+    <button data-k="inv">1/x</button><button data-k="sq">x²</button><button data-k="sqrt">√x</button><button data-k="/">÷</button>
+    <button class="n" data-k="7">7</button><button class="n" data-k="8">8</button><button class="n" data-k="9">9</button><button data-k="*">×</button>
+    <button class="n" data-k="4">4</button><button class="n" data-k="5">5</button><button class="n" data-k="6">6</button><button data-k="-">−</button>
+    <button class="n" data-k="1">1</button><button class="n" data-k="2">2</button><button class="n" data-k="3">3</button><button data-k="+">+</button>
+    <button data-k="neg">±</button><button class="n" data-k="0">0</button><button data-k=".">.</button><button class="eq" data-k="=">=</button>
+  </div>
+  <details class="hist" open><summary>History</summary><ul id="hlist"></ul><button id="hclear" type="button">Clear history</button></details>
+</main>
+<script>
+// ---- Logic (no DOM here, so it can be tested on its own) ----
+const SYM = {'+':'+','-':'−','*':'×','/':'÷'};
+const fmt = n => String(parseFloat(n.toPrecision(12)));
+const Calc = {
+  s: null, deg: true, hist: [],
+  reset(){ this.s = {display:'0', acc:null, op:null, fresh:true, lastOp:null, lastB:null, expr:'', error:null}; },
+  cur(){ return parseFloat(this.s.display); },
+  fail(msg){ this.s.error = msg; this.s.expr = ''; },
+  guard(){ if (this.s.error) this.reset(); },
+  apply(a, op, b){
+    if (op === '/' && b === 0) return this.fail('Cannot divide by zero');
+    const r = op==='+' ? a+b : op==='-' ? a-b : op==='*' ? a*b : op==='/' ? a/b : Math.pow(a,b);
+    if (Number.isNaN(r)) return this.fail('Invalid input');
+    if (!isFinite(r)) return this.fail('Overflow');
+    return r;
+  },
+  digit(d){
+    this.guard(); const s = this.s;
+    if (s.fresh){ if (s.lastOp && !s.op) { s.lastOp = null; s.expr = ''; } s.display = d; s.fresh = false; }
+    else if (s.display.replace(/[-.]/g,'').length < 16) s.display = s.display === '0' ? d : s.display + d;
+  },
+  dot(){
+    this.guard(); const s = this.s;
+    if (s.fresh){ s.display = '0.'; s.fresh = false; }
+    else if (!s.display.includes('.')) s.display += '.';
+  },
+  operator(o){
+    this.guard(); const s = this.s;
+    if (s.op && !s.fresh){
+      const r = this.apply(s.acc, s.op, this.cur());
+      if (r === undefined) return;
+      s.acc = r; s.display = fmt(r);
+    } else if (!s.op) s.acc = this.cur();
+    s.op = o; s.fresh = true; s.lastOp = null;
+    s.expr = fmt(s.acc) + ' ' + SYM[o];
+  },
+  equals(){
+    this.guard(); const s = this.s; const c = this.cur();
+    let a, op, b;
+    if (s.op){ a = s.acc; op = s.op; b = c; s.lastOp = op; s.lastB = b; }
+    else if (s.lastOp){ a = c; op = s.lastOp; b = s.lastB; }   // repeated "="
+    else return;
+    const r = this.apply(a, op, b);
+    if (r === undefined) return;
+    s.expr = fmt(a) + ' ' + SYM[op] + ' ' + fmt(b) + ' =';
+    s.display = fmt(r); s.acc = null; s.op = null; s.fresh = true;
+    this.hist.unshift({t: s.expr + ' ' + s.display, v: s.display}); this.hist.length = Math.min(this.hist.length, 30);
+  },
+  unary(kind){
+    this.guard(); const s = this.s; const c = this.cur(); let r, label;
+    if (kind === 'sqrt'){ if (c < 0) return this.fail('Invalid input'); r = Math.sqrt(c); label = '√(' + fmt(c) + ')'; }
+    if (kind === 'sq'){ r = c*c; label = 'sqr(' + fmt(c) + ')'; }
+    if (kind === 'inv'){ if (c === 0) return this.fail('Cannot divide by zero'); r = 1/c; label = '1/(' + fmt(c) + ')'; }
+    if (!isFinite(r)) return this.fail('Overflow');
+    s.display = fmt(r); s.fresh = true; if (!s.op) s.expr = label;
+  },
+  percent(){
+    this.guard(); const s = this.s;
+    const r = (s.acc !== null && s.op) ? s.acc * this.cur() / 100 : 0;
+    s.display = fmt(r); s.fresh = true;
+  },
+  negate(){ this.guard(); const s = this.s; if (s.display !== '0') s.display = s.display[0] === '-' ? s.display.slice(1) : '-' + s.display; },
+  backspace(){
+    this.guard(); const s = this.s; if (s.fresh) return;
+    s.display = s.display.slice(0,-1);
+    if (s.display === '' || s.display === '-') s.display = '0';
+  },
+  clearEntry(){ this.guard(); this.s.display = '0'; this.s.fresh = false; },
+  sci(kind){
+    this.guard(); const s = this.s, c = this.cur(), D = this.deg ? Math.PI/180 : 1; let r, label;
+    if (kind === 'pi' || kind === 'e'){ s.display = fmt(kind === 'pi' ? Math.PI : Math.E); s.fresh = true; return; }
+    if (kind === 'sin' || kind === 'cos' || kind === 'tan'){
+      if (kind === 'tan' && this.deg && Math.abs(((c % 180) + 180) % 180 - 90) < 1e-9) return this.fail('Invalid input');
+      r = Math[kind](c * D); if (Math.abs(r) < 1e-12) r = 0; label = kind + '(' + fmt(c) + (this.deg ? '°' : '') + ')';
+    } else if (kind === 'ln' || kind === 'log'){
+      if (c <= 0) return this.fail('Invalid input');
+      r = kind === 'ln' ? Math.log(c) : Math.log10(c); label = kind + '(' + fmt(c) + ')';
+    } else if (kind === 'fact'){
+      if (!Number.isInteger(c) || c < 0 || c > 170) return this.fail('Invalid input');
+      r = 1; for (let i = 2; i <= c; i++) r *= i; label = fmt(c) + '!';
+    } else if (kind === 'tenx'){ r = Math.pow(10, c); label = '10^' + fmt(c); }
+    else if (kind === 'abs'){ r = Math.abs(c); label = '|' + fmt(c) + '|'; }
+    else return;
+    if (!isFinite(r)) return this.fail('Overflow');
+    s.display = fmt(r); s.fresh = true; if (!s.op) s.expr = label + ' =';
+    this.hist.unshift({t: label + ' = ' + s.display, v: s.display}); this.hist.length = Math.min(this.hist.length, 30);
+  },
+};
+Calc.reset();
+
+// ---- UI ----
+const dispEl = document.getElementById('disp'), exprEl = document.getElementById('expr');
+function render(){
+  const s = Calc.s, t = s.error || s.display;
+  dispEl.textContent = t; exprEl.textContent = s.expr;
+  dispEl.style.fontSize = t.length > 14 ? '24px' : t.length > 10 ? '32px' : '44px';
+  document.getElementById('degbtn').textContent = Calc.deg ? 'Deg' : 'Rad';
+  const hl = document.getElementById('hlist'); hl.textContent = '';
+  if (!Calc.hist.length){ const li = document.createElement('li'); li.textContent = 'No history yet'; hl.appendChild(li); }
+  Calc.hist.forEach(h => {
+    const li = document.createElement('li'); li.textContent = h.t; li.title = 'Click to reuse the result'; li.style.cursor = 'pointer';
+    li.addEventListener('click', () => { Calc.guard(); Calc.s.display = h.v; Calc.s.fresh = true; render(); });
+    hl.appendChild(li);
+  });
+}
+function press(k){
+  if (/^\d$/.test(k)) Calc.digit(k);
+  else if (k === '.') Calc.dot();
+  else if ('+-*/^'.includes(k)) Calc.operator(k);
+  else if (k === '=') Calc.equals();
+  else if (k === 'C') Calc.reset();
+  else if (k === 'CE') Calc.clearEntry();
+  else if (k === 'BS') Calc.backspace();
+  else if (k === 'neg') Calc.negate();
+  else if (k === 'pct') Calc.percent();
+  else if (k === 'sqrt' || k === 'sq' || k === 'inv') Calc.unary(k);
+  else if (k === 'deg') Calc.deg = !Calc.deg;
+  else Calc.sci(k);
+  render();
+}
+document.querySelector('.calc').addEventListener('click', e => {
+  const b = e.target.closest('button[data-k]'); if (b) press(b.dataset.k);
+});
+document.addEventListener('keydown', e => {
+  const k = e.key;
+  if (/^\d$/.test(k) || '+-*/.^'.includes(k)) press(k);
+  else if (k === ',') press('.');
+  else if (k === 'Enter' || k === '=') { e.preventDefault(); press('='); }
+  else if (k === 'Backspace') press('BS');
+  else if (k === 'Escape') press('C');
+  else if (k === 'Delete') press('CE');
+  else if (k === '%') press('pct');
+});
+SYM['^'] = '^';
+document.querySelectorAll('.modes button').forEach(b => b.addEventListener('click', () => {
+  document.getElementById('sci').hidden = b.dataset.mode !== 'sci';
+  document.querySelectorAll('.modes button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+}));
+document.getElementById('hclear').addEventListener('click', () => { Calc.hist = []; render(); });
+render();
+</script>
+</body>
+</html>
